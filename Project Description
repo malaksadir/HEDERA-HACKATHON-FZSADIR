@@ -1,0 +1,45 @@
+Hedera Trade Finance PoC: Tokenized Receivables & Verifiable Audit Trail
+This project demonstrates a foundational workflow for digitizing trade finance assets on the Hedera Testnet, fulfilling the requirements of tokenizing invoices, hashing documents, and creating a real-time audit trail.
+Hedera Trade Finance Solution Description
+The proposed project, Hedera Trade Finance PoC, is a digital platform designed to modernize and secure the assignment of trade receivables (invoices) using Distributed Ledger Technology (DLT). By tokenizing invoices and leveraging the Hedera network for data verification and asset transfer, the solution drastically reduces fraud risk, accelerates liquidity access for exporters, and provides regulators with a complete, real-time audit trail.
+
+Core Idea and Business Value
+The platform transforms traditional paper-based invoices and supporting trade documents into verifiable, on-chain digital assets. This enables three primary benefits:
+
+Instant Verification of Trade Data: Core trade documents (like Bills of Lading) are cryptographically hashed and anchored to the Hedera ledger via the Hedera Consensus Service (HCS). This creates an unchangeable, verifiable record of the document's existence and content.
+
+Liquidity Access through Tokenized Receivables: Invoices are represented as Non-Fungible Tokens (NFTs) using the Hedera Token Service (HTS). This tokenized receivable can be instantly transferred (assigned) to an investor/lender in exchange for immediate capital, bypassing slow, manual financing processes.
+
+Smart Escrow Payments (Conceptual): The full solution envisions using a Solidity Smart Contract to hold the payment funds from the Importer. This contract would be coded to automatically release the payment to the investor upon verifiable proof of delivery (e.g., an HCS message or a trigger from a third-party oracle), ensuring a trustless, automated settlement.
+
+Technical Workflow (Demonstrated in PoC)
+The provided Node.js script executes the core setup and asset assignment workflow on the Hedera Testnet:
+
+Phase 1: Setup and Asset Creation
+Account Setup: Three necessary parties in the trade chain are created on the Hedera Testnet:
+
+Exporter Account (Seller of the goods/receivable).
+
+Importer Account (Buyer of the goods).
+
+Investor/Escrow Account (The funder who purchases the receivable).
+
+Document Hashing (HCS): A simulated hash of a crucial trade document (e.g., Bill of Lading) is submitted to a dedicated Hedera Consensus Service (HCS) Topic. This transaction permanently anchors the proof of the document to the network, establishing its authenticity and existence.
+
+Invoice Tokenization (HTS NFT): A Non-Fungible Token (NFT), symbolized as TINV ("Tokenized Invoice"), is created using HTS. A single serial number of this NFT is then Minted with metadata that references the invoice details and the HCS document hash, effectively digitizing the invoice as a unique asset owned by the Exporter.
+
+Phase 2: Assignment and Audit Trail
+Assignment of Receivable (NFT Transfer): The core trade finance transaction occurs: the Exporter transfers the TINV NFT (the tokenized receivable) to the Investor Account via an atomic HTS TransferTransaction.
+
+This instant transfer demonstrates how the Exporter receives liquidity immediately from the Investor, and the Investor gains legal ownership of the receivable on the ledger.
+
+Real-Time Audit Trail: Every transaction—account creation, HCS message submission, NFT minting, and NFT transfer—is recorded with sub-5 second finality on the public Hedera ledger. This provides a full, verifiable audit trail for all participants, banks, and regulatory bodies.
+
+Phase 3: Smart Escrow (Conceptual Completion - Step 3)
+While the provided script is focused on HTS and HCS setup, the conceptual final step (Step 3) involves:
+
+The Importer depositing stablecoin funds into a pre-deployed Solidity Smart Contract (the Escrow).
+
+Upon the verified event (e.g., the HCS confirmation of a "Goods Received" message), the Smart Contract automatically executes the final payment, releasing the stablecoins from escrow to the current NFT owner (Investor).
+
+This model ensures a fully digitized, instant, and trustless settlement for trade finance transactions.
