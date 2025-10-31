@@ -1,0 +1,196 @@
+import { 
+    Client, PrivateKey, AccountCreateTransaction, 
+    TokenCreateTransaction, TokenSupplyType, NftId, 
+    TokenMintTransaction, TokenAssociateTransaction, 
+    TransferTransaction, TopicCreateTransaction, 
+    TopicMessageSubmitTransaction, Hbar
+} from "@hashgraph/sdk";
+import 'dotenv/config';
+
+// === CONFIGURATION ===
+const INITIAL_BALANCE = new Hbar(5); // Initial balance for new accounts
+const LOG_SEPARATOR = "\n=========================================\n";
+
+// Keys and IDs (will be populated during execution)
+let operatorId;
+let operatorKey;
+let client;
+
+// Generated Keys for our Trade Parties
+const exporterKey = PrivateKey.generateED25519();
+const importerKey = PrivateKey.generateED25519();
+const investorKey = PrivateKey.generateED25519(); // Acts as the Escrow Agent/Funder
+
+let exporterAccountId;
+let importerAccountId;
+let investorAccountId; 
+let invoiceTokenId; // HTS NFT ID for the tokenized invoice
+let hcsTopicId;     // HCS Topic ID for document tracking
+let invoiceSerialNumber = 1;
+
+/**
+ * Utility function to create a new Testnet account.
+ */
+async function createNewAccount(initialBalance, key) {
+    const response = await new AccountCreateTransaction()
+        .setInitialBalance(initialBalance)
+        .setKey(key.publicKey)
+        .execute(client);
+    const receipt = await response.getReceipt(client);
+    return receipt.accountId;
+}
+
+/**
+ * Main function to execute the full trade finance workflow.
+ */
+async function main() {
+    console.log(LOG_SEPARATOR);
+    console.log("HEDERA TRADE FINANCE WORKFLOW (Steps 1, 2, 4)");
+    console.log(LOG_SEPARATOR);
+    
+    // --- 0. CLIENT SETUP (Requires user input) ---
+    // In a real environment, these would come from environment variables or a secure vault.
+    try {
+        operatorId = prompt("Enter your Testnet Operator Account ID (e.g., 0.0.12345):");
+        operatorKey = prompt("Enter your Testnet Private Key (Secret!):");
+
+        if (!operatorId || !operatorKey) {
+            throw new Error("Operator ID and Key must be provided.");
+        }
+
+        client = Client.forTestnet().setOperator(operatorId, operatorKey);
+        console.log(`✅ Client initialized for Treasury: ${operatorId}`);
+        console.log(LOG_SEPARATOR);
+
+    } catch (e) {
+        console.error(`Setup Error: ${e.message}`);
+        return;
+    }
+
+    try {
+        // --- 1. SET UP ACCOUNTS ---
+        console.log("1. Setting up Trade Party Accounts...");
+        exporterAccountId = await createNewAccount(INITIAL_BALANCE, exporterKey);
+        importerAccountId = await createNewAccount(INITIAL_BALANCE, importerKey);
+        investorAccountId = await createNewAccount(INITIAL_BALANCE, investorKey);
+
+        console.log(`   -> Exporter Account ID (Seller): ${exporterAccountId}`);
+        console.log(`   -> Importer Account ID (Buyer):  ${importerAccountId}`);
+        console.log(`   -> Investor/Escrow ID (Funder):  ${investorAccountId}`);
+        console.log(LOG_SEPARATOR);
+
+        // --- 2. TOKENIZE INVOICES (HTS NFT) ---
+        console.log("2. Tokenizing Invoices (HTS NFT Creation)...");
+        let tokenCreateResponse = await new TokenCreateTransaction()
+            .setTokenName("Tokenized Invoice")
+            .setTokenSymbol("TINV")
+            .setTokenType(TokenSupplyType.FINITE)
+            .setSupplyKey(operatorKey.publicKey)
+            .setTreasuryAccountId(exporterAccountId) // Exporter is the initial treasury
+            .setAdminKey(operatorKey.publicKey) 
+            .setMaxSupply(100)
+            .freezeWith(client)
+            .sign(operatorKey) // Signed by Admin
+            .execute(client);
+
+        let tokenCreateReceipt = await tokenCreateResponse.getReceipt(client);
+        invoiceTokenId = tokenCreateReceipt.tokenId;
+
+        console.log(`   -> Invoice Token ID (TINV): ${invoiceTokenId}`);
+        console.log(LOG_SEPARATOR);
+
+
+        // --- 3. HASH TRADE DOCUMENTS (HCS) & MINT INVOICE ---
+        console.log("3. Hashing Documents and Minting Invoice NFT...");
+
+        // A. Create HCS Topic for immutable document tracking
+        let topicCreateResponse = await new TopicCreateTransaction().execute(client);
+        let topicCreateReceipt = await topicCreateResponse.getReceipt(client);
+        hcsTopicId = topicCreateReceipt.topicId;
+        console.log(`   -> HCS Document Topic ID: ${hcsTopicId} (For Audit Trail)`);
+
+        // B. Hash Document (Simulated: The hash is a unique piece of data)
+        const documentHash = "SHA256_HASH_OF_BILL_OF_LADING_FEE3D0637F";
+
+        await new TopicMessageSubmitTransaction({ topicId: hcsTopicId })
+            .setMessage(`Trade Document Hash Submitted: ${documentHash}`)
+            .execute(client);
+        
+        console.log(`   -> Document Hash ${documentHash.substring(0, 15)}... submitted to HCS.`);
+
+
+        // C. Mint the NFT representing the invoice
+        const metadata = Buffer.from(`Invoice #4567, Amount $5000, Due 90 Days. DocHash: ${documentHash}`);
+
+        let mintResponse = await new TokenMintTransaction()
+            .setTokenId(invoiceTokenId)
+            .setMetadata([metadata])
+            .freezeWith(client)
+            .sign(exporterKey) // Signed by the Exporter (HTS Supply Key is OperatorKey, but treasury is Exporter)
+            .execute(client);
+            
+        let mintReceipt = await mintResponse.getReceipt(client);
+        invoiceSerialNumber = mintReceipt.serials[0].low;
+        console.log(`   -> Invoice NFT Minted (Serial ${invoiceSerialNumber}) and assigned to Exporter.`);
+        console.log(LOG_SEPARATOR);
+
+
+        // --- 4. ASSIGN INVOICE (HTS NFT TRANSFER) ---
+        // Simulates the Exporter selling the receivable to the Investor for immediate liquidity.
+        console.log("4. Assigning Tokenized Invoice (NFT) to Investor/Escrow...");
+        
+        // Exporter must associate the token first to receive the NFT, 
+        // but here we are transferring it *from* Exporter (treasury) *to* Investor.
+        
+        // Investor must associate the token to receive it.
+        await new TokenAssociateTransaction()
+            .setAccountId(investorAccountId)
+            .setTokenIds([invoiceTokenId])
+            .freezeWith(client)
+            .sign(investorKey)
+            .execute(client);
+            
+        console.log(`   -> Investor associated with ${invoiceTokenId}`);
+
+
+        // NFT Transfer: Exporter (Treasury) -> Investor
+        let transferNftResponse = await new TransferTransaction()
+            .addNftTransfer(
+                new NftId(invoiceTokenId, invoiceSerialNumber), 
+                exporterAccountId, 
+                investorAccountId
+            )
+            .freezeWith(client)
+            .sign(exporterKey) // Signed by Exporter (current owner)
+            .execute(client);
+
+        await transferNftResponse.getReceipt(client);
+        console.log(`   -> NFT (Serial ${invoiceSerialNumber}) transferred successfully from Exporter to Investor!`);
+        console.log("   -> The Investor now owns the receivable. This creates the audit trail.");
+        console.log(LOG_SEPARATOR);
+
+        // --- STEP 5: SMART ESCROW SETUP (Conceptual for this prompt) ---
+        // NOTE: The actual smart contract deployment and escrow logic (Step 3 
+        // from the image) requires a more complex Solidity workflow.
+        console.log("5. CONCEPTUAL SMART ESCROW PAYMENT (The Final Step)");
+        console.log("   -> In a full solution, a **Smart Contract** would hold the Importer's funds (or stablecoin).");
+        console.log("   -> The **Proof-of-Delivery** (a signed transaction or HCS message) would trigger the contract.");
+        console.log("   -> The contract would then instantly release the payment to the Investor (funder).");
+        console.log(LOG_SEPARATOR);
+
+
+    } catch (error) {
+        console.error(`\n--- EXECUTION FAILED ---`);
+        console.error(error.message);
+    }
+}
+
+// Check if run in a browser-like environment where prompt is available
+if (typeof prompt === 'function') {
+    main();
+} else {
+    // If running in a Node.js console without a prompt function, 
+    // you must manually set operatorId and operatorKey here.
+    console.log("--- WARNING: Running in non-interactive mode. Please manually set credentials inside main() ---");
+    // main(); // Uncomment and set credentials manually if needed
+}
